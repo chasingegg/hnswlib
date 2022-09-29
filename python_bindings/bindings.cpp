@@ -631,6 +631,104 @@ public:
 
     }
 
+    py::object knnQuery_return_numpy_new(py::object input, py::object ef_list, size_t k = 1, int num_threads = -1) {
+        py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
+        py::array_t < int, py::array::c_style | py::array::forcecast > efs(ef_list);
+        auto buffer = items.request();
+        auto ef_buffer = efs.request();
+        hnswlib::labeltype *data_numpy_l;
+        dist_t *data_numpy_d;
+        size_t rows, features;
+
+        if (num_threads <= 0)
+            num_threads = num_threads_default;
+
+        {
+            py::gil_scoped_release l;
+
+            if (buffer.ndim != 2 && buffer.ndim != 1) throw std::runtime_error("data must be a 1d/2d array");
+            if (ef_buffer.ndim != 1) throw std::runtime_error("ef must be a 1d array");
+            if (buffer.ndim == 2) {
+                rows = buffer.shape[0];
+                features = buffer.shape[1];
+                assert_true(rows == ef_buffer.shape[0], "data size must be the same with ef size");
+            }
+            else{
+                rows = 1;
+                features = buffer.shape[0];
+                assert_true(1 == ef_buffer.shape[0], "data size must be the same with ef size");
+            }
+
+            // avoid using threads when the number of searches is small:
+
+            if(rows<=num_threads*4){
+                num_threads=1;
+            }
+
+            data_numpy_l = new hnswlib::labeltype[rows * k];
+            data_numpy_d = new dist_t[rows * k];
+
+            if(normalize==false) {
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                                std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnnByOuterEf(
+                                        (void *) items.data(row), k, efs.data(row));
+                                if (result.size() != k)
+                                    throw std::runtime_error(
+                                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
+                                for (int i = k - 1; i >= 0; i--) {
+                                    auto &result_tuple = result.top();
+                                    data_numpy_d[row * k + i] = result_tuple.first;
+                                    data_numpy_l[row * k + i] = result_tuple.second;
+                                    result.pop();
+                                }
+                            }
+                );
+            }
+            else{
+                std::vector<float> norm_array(num_threads*features);
+                ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
+                                float *data= (float *) items.data(row);
+
+                                size_t start_idx = threadId * dim;
+                                normalize_vector((float *) items.data(row), (norm_array.data()+start_idx));
+
+                                std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnnByOuterEf(
+                                        (void *) (norm_array.data()+start_idx), k, efs.data(row));
+                                if (result.size() != k)
+                                    throw std::runtime_error(
+                                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
+                                for (int i = k - 1; i >= 0; i--) {
+                                    auto &result_tuple = result.top();
+                                    data_numpy_d[row * k + i] = result_tuple.first;
+                                    data_numpy_l[row * k + i] = result_tuple.second;
+                                    result.pop();
+                                }
+                            }
+                );
+            }
+        }
+        py::capsule free_when_done_l(data_numpy_l, [](void *f) {
+            delete[] f;
+        });
+        py::capsule free_when_done_d(data_numpy_d, [](void *f) {
+            delete[] f;
+        });
+
+        return py::make_tuple(
+                py::array_t<hnswlib::labeltype>(
+                        {rows, k}, // shape
+                        {k * sizeof(hnswlib::labeltype),
+                         sizeof(hnswlib::labeltype)}, // C-style contiguous strides for double
+                        data_numpy_l, // the data pointer
+                        free_when_done_l),
+                py::array_t<dist_t>(
+                        {rows, k}, // shape
+                        {k * sizeof(dist_t), sizeof(dist_t)}, // C-style contiguous strides for double
+                        data_numpy_d, // the data pointer
+                        free_when_done_d));
+
+    }
+
     void markDeleted(size_t label) {
         appr_alg->markDelete(label);
     }
@@ -845,6 +943,7 @@ PYBIND11_PLUGIN(hnswlib) {
         .def(py::init<const std::string &, const int>(), py::arg("space"), py::arg("dim"))
         .def("init_index", &Index<float>::init_new_index, py::arg("max_elements"), py::arg("M")=16, py::arg("ef_construction")=200, py::arg("random_seed")=100)
         .def("knn_query", &Index<float>::knnQuery_return_numpy, py::arg("data"), py::arg("k")=1, py::arg("num_threads")=-1)
+        .def("knn_query_new", &Index<float>::knnQuery_return_numpy_new, py::arg("data"), py::arg("ef"), py::arg("k")=1, py::arg("num_threads")=-1)
         .def("add_items", &Index<float>::addItems, py::arg("data"), py::arg("ids") = py::none(), py::arg("num_threads")=-1)
         .def("get_items", &Index<float, float>::getDataReturnList, py::arg("ids") = py::none())
         .def("get_ids_list", &Index<float>::getIdsList)

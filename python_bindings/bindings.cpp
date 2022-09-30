@@ -631,7 +631,7 @@ public:
 
     }
 
-    py::object knnQuery_return_numpy_new(py::object input, py::object ef_list, size_t k = 1, int num_threads = -1) {
+    py::object knnQuery_return_numpy_new(py::object input, py::object ef_list, size_t k = 1, bool enable_ef_lessthan_k = true, int num_threads = -1) {
         py::array_t < dist_t, py::array::c_style | py::array::forcecast > items(input);
         py::array_t < int, py::array::c_style | py::array::forcecast > efs(ef_list);
         auto buffer = items.request();
@@ -671,11 +671,14 @@ public:
             if(normalize==false) {
                 ParallelFor(0, rows, num_threads, [&](size_t row, size_t threadId) {
                                 std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnnByOuterEf(
-                                        (void *) items.data(row), k, efs.data(row));
-                                if (result.size() != k)
-                                    throw std::runtime_error(
-                                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                                for (int i = k - 1; i >= 0; i--) {
+                                        (void *) items.data(row), k, efs.data()[row], enable_ef_lessthan_k);
+                                // if (result.size() != k)
+                                //     throw std::runtime_error(
+                                //             "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
+                                int result_size = result.size();
+                                assert_true(result_size <= k, "result size not larger than k");
+
+                                for (int i = result_size - 1; i >= 0; i--) {
                                     auto &result_tuple = result.top();
                                     data_numpy_d[row * k + i] = result_tuple.first;
                                     data_numpy_l[row * k + i] = result_tuple.second;
@@ -693,11 +696,13 @@ public:
                                 normalize_vector((float *) items.data(row), (norm_array.data()+start_idx));
 
                                 std::priority_queue<std::pair<dist_t, hnswlib::labeltype >> result = appr_alg->searchKnnByOuterEf(
-                                        (void *) (norm_array.data()+start_idx), k, efs.data(row));
-                                if (result.size() != k)
-                                    throw std::runtime_error(
-                                            "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
-                                for (int i = k - 1; i >= 0; i--) {
+                                        (void *) (norm_array.data()+start_idx), k, efs.data()[row], enable_ef_lessthan_k);
+                                // if (result.size() != k)
+                                //     throw std::runtime_error(
+                                //             "Cannot return the results in a contigious 2D array. Probably ef or M is too small");
+                                int result_size = result.size();
+                                assert_true(result_size <= k, "result size not larger than k");
+                                for (int i = result_size - 1; i >= 0; i--) {
                                     auto &result_tuple = result.top();
                                     data_numpy_d[row * k + i] = result_tuple.first;
                                     data_numpy_l[row * k + i] = result_tuple.second;
@@ -943,7 +948,7 @@ PYBIND11_PLUGIN(hnswlib) {
         .def(py::init<const std::string &, const int>(), py::arg("space"), py::arg("dim"))
         .def("init_index", &Index<float>::init_new_index, py::arg("max_elements"), py::arg("M")=16, py::arg("ef_construction")=200, py::arg("random_seed")=100)
         .def("knn_query", &Index<float>::knnQuery_return_numpy, py::arg("data"), py::arg("k")=1, py::arg("num_threads")=-1)
-        .def("knn_query_new", &Index<float>::knnQuery_return_numpy_new, py::arg("data"), py::arg("ef"), py::arg("k")=1, py::arg("num_threads")=-1)
+        .def("knn_query_new", &Index<float>::knnQuery_return_numpy_new, py::arg("data"), py::arg("ef"), py::arg("k")=1, py::arg("enable_ef_lessthan_k")=true, py::arg("num_threads")=-1)
         .def("add_items", &Index<float>::addItems, py::arg("data"), py::arg("ids") = py::none(), py::arg("num_threads")=-1)
         .def("get_items", &Index<float, float>::getDataReturnList, py::arg("ids") = py::none())
         .def("get_ids_list", &Index<float>::getIdsList)

@@ -47,16 +47,22 @@ p.save_index(index_path)
 
 # Query the elements for themselves and measure recall:
 labels, distances = [], []
-efs1 = [2, 10, 5, 10, 3]
-efs2 = [3, 10, 5, 10, 3]
+efs1 = [2, 10, 5, 15, 3]
+efs2 = [2, 0, 5, 15, 10]
 for i in range(5):
     p.set_ef(efs1[i])
-    l, d = p.knn_query(data[-5+i], k=1)
+    l, d = p.knn_query(data[-5+i], k=10, num_threads=1)
     labels.append(l[0])
     distances.append(d[0])
 labels = np.array(labels)
 distances = np.array(distances)
 
-print(labels, distances)
-labels2, distances2 = p.knn_query_new(data[-5:], ef=efs2, k=1)
+labels2, distances2 = p.knn_query_new(data[-5:], ef=efs2, k=10, enable_ef_lessthan_k=False)
 print(labels2, distances2)
+for i in range(labels.shape[0]):
+    for j in range(labels.shape[1]):
+        assert labels[i][j] == labels2[i][j]
+        assert distances[i][j] == distances2[i][j]
+
+labels3, distances3 = p.knn_query_new(data[-5:], ef=efs2, k=10, enable_ef_lessthan_k=True)
+print(labels3, distances3)

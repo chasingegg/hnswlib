@@ -1168,9 +1168,10 @@ namespace hnswlib {
         };
 
         std::priority_queue<std::pair<dist_t, labeltype >>
-        searchKnnByOuterEf(const void *query_data, int k, const int* ef_from_user) const {
+        searchKnnByOuterEf(const void *query_data, int k, int ef_from_user, bool enable_ef_lessthan_k) const {
             std::priority_queue<std::pair<dist_t, labeltype >> result;
             if (cur_element_count == 0) return result;
+            if (ef_from_user == 0 && enable_ef_lessthan_k) return result;
 
             tableint currObj = enterpoint_node_;
             dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
@@ -1202,17 +1203,19 @@ namespace hnswlib {
                 }
             }
 
+            int final_ef = (enable_ef_lessthan_k) ? ef_from_user : std::max(ef_from_user, k);
+            int final_k = (enable_ef_lessthan_k) ? std::min(ef_from_user, k) : k;
             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
             if (num_deleted_) {
                 top_candidates=searchBaseLayerST<true,true>(
-                        currObj, query_data, std::max((*ef_from_user), k));
+                        currObj, query_data, final_ef);
             }
             else{
                 top_candidates=searchBaseLayerST<false,true>(
-                        currObj, query_data, std::max((*ef_from_user), k));
+                        currObj, query_data, final_ef);
             }
 
-            while (top_candidates.size() > k) {
+            while (top_candidates.size() > final_k) {
                 top_candidates.pop();
             }
             while (top_candidates.size() > 0) {
